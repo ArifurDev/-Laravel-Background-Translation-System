@@ -76,8 +76,44 @@ php artisan migrate
 ## 🧠 Step 3: Translation Helper
 
 ```php
-class Helper
+<?php
+
+namespace App\Helpers;
+
+use App\Jobs\TranslateTextJob;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Stichoza\GoogleTranslate\Exceptions\LargeTextException;
+use Stichoza\GoogleTranslate\Exceptions\RateLimitException;
+use Stichoza\GoogleTranslate\Exceptions\TranslationRequestException;
+use Stichoza\GoogleTranslate\GoogleTranslate;
+
+class translateHelper
 {
+
+
+    /**
+     * @throws LargeTextException
+     * @throws RateLimitException
+     * @throws TranslationRequestException
+     */
+    public static function translateText(string $text, string $lang): ?string
+    {
+        if ($lang === 'en') {
+            return $text;
+        }
+        $tr = new GoogleTranslate();
+        $tr->setTarget($lang);
+
+        return $tr->translate($text);
+    }
+    
+    /**
+     * @throws LargeTextException
+     * @throws RateLimitException
+     * @throws TranslationRequestException
+     */
     public static function translateCached(string $key, string $text, string $lang)
     {
         if ($lang === 'en') {
@@ -86,24 +122,29 @@ class Helper
 
         $cacheKey = "translation.{$key}.{$lang}";
 
-        return Cache::remember($cacheKey, 86400, function () use ($key, $text, $lang) {
+        // Return cached value if exists
+        if (Cache::has($cacheKey)) {
+            return Cache::get($cacheKey);
+        }
 
-            $row = DB::table('translations')
-                ->where('key', $key)
-                ->where('lang', $lang)
-                ->first();
+        // Check DB
+        $row = DB::table('translations')
+            ->where('key', $key)
+            ->where('lang', $lang)
+            ->first();
 
-            if ($row) {
-                return $row->value;
-            }
+        if ($row) {
+            Cache::put($cacheKey, $row->value, 86400);
+            return $row->value;
+        }
+        $translated = self::translateText($text, $lang);
+        TranslateTextJob::dispatch($key, $text, $lang);  // Dispatch job ONCE
 
-            // background job dispatch
-            TranslateTextJob::dispatch($key, $text, $lang);
-
-            return $text; // fallback (instant response)
-        });
+        return $translated;  //  Fallback response
     }
+
 }
+
 ```
 
 👉 Cache miss হলেও user original English text পাবে  
